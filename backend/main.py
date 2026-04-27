@@ -9,10 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
 
-# ─── Placeholder Routers ────────────────────────────────────────
+# ─── Real Routers ────────────────────────────────────────────────
+from auth.routes import router as auth_router
+
+# ─── Placeholder Routers (to be replaced in later phases) ───────
 from fastapi import APIRouter
 
-auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 interview_router = APIRouter(prefix="/interview", tags=["Interview"])
 verify_router = APIRouter(prefix="/verify", tags=["Verification"])
 report_router = APIRouter(prefix="/report", tags=["Reports"])
