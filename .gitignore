@@ -1,0 +1,13 @@
+keys/private_key.pem
+*.db
+__pycache__/
+*.pyc
+.env
+node_modules/
+*.h5
+*.pt
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
