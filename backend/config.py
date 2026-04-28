@@ -27,11 +27,13 @@ MAX_FAILURES_BEFORE_TERMINATE = 2
 
 # ─── Ollama (Local LLM) ─────────────────────────────────────────
 OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3:7b"
-OLLAMA_FALLBACK_MODEL = "qwen3:3b"
+# Yeh do lines badlo
+OLLAMA_MODEL = "qwen2.5:7b"
+OLLAMA_FALLBACK_MODEL = "qwen2.5:3b"
 
 # ─── Whisper (Speech-to-Text) ───────────────────────────────────
 WHISPER_MODEL = "small"
 
 # ─── YOLO (Object Detection) ────────────────────────────────────
 YOLO_MODEL = "yolov8n.pt"
+

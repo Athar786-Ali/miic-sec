@@ -11,11 +11,11 @@ from database import init_db
 
 # ─── Real Routers ────────────────────────────────────────────────
 from auth.routes import router as auth_router
+from interview.routes import router as interview_router
 
 # ─── Placeholder Routers (to be replaced in later phases) ───────
 from fastapi import APIRouter
 
-interview_router = APIRouter(prefix="/interview", tags=["Interview"])
 verify_router = APIRouter(prefix="/verify", tags=["Verification"])
 report_router = APIRouter(prefix="/report", tags=["Reports"])
 security_router = APIRouter(prefix="/security", tags=["Security"])
