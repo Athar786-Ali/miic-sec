@@ -1,2 +1,2 @@
 # MIIC-Sec WebSocket Module
-# Real-time communication for live interviews
+# Real-time event streaming for candidates and recruiters
