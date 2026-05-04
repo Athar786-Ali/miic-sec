@@ -16,10 +16,10 @@ JWT_ALGORITHM = "RS256"
 JWT_EXPIRY_HOURS = 2
 
 # ─── Face Verification ──────────────────────────────────────────
-FACE_SIMILARITY_THRESHOLD = 0.75
+FACE_SIMILARITY_THRESHOLD = 0.35   # facenet-pytorch VGGFace2 cosine similarity
 
 # ─── Voice Verification ─────────────────────────────────────────
-VOICE_SIMILARITY_THRESHOLD = 0.80
+VOICE_SIMILARITY_THRESHOLD = 0.60  # wav2vec2 cosine similarity (5s login vs 10s enroll)
 
 # ─── Continuous Verification ────────────────────────────────────
 CONTINUOUS_VERIFY_INTERVAL = 30          # seconds

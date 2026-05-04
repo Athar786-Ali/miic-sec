@@ -10,22 +10,28 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict
 
+import cv2
+import numpy as np
 import pyotp
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from auth.jwt_manager import get_current_candidate
+from auth.face_auth import verify_face
 from crypto.audit_log import log_event
 from database import Candidate, Session as DBSession, SessionLocal, get_db
 from verification.continuous_verifier import (
     MAX_FAILURES_BEFORE_TERMINATE,
     resolve_step_up,
     terminate_session,
+    trigger_step_up_totp,
 )
+from verification.proxy_detector import ProxyDetector
 from websocket.ws_manager import (
     RECHECK_PASSED,
     TAB_SWITCH_WARNING,
+    MULTIPLE_PERSONS_ALERT,
     _build_message,
     manager as ws_manager,
 )
@@ -33,6 +39,9 @@ from websocket.ws_manager import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/security", tags=["Security"])
+
+# Global proxy detector instance (loads YOLO once)
+proxy_detector = ProxyDetector()
 
 # ─── Bearer token extractor ───────────────────────────────────────────────────
 
@@ -306,3 +315,87 @@ async def step_up_verify(
             )
 
         return StepUpVerifyResponse(verified=False, remaining_attempts=remaining)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# POST /security/face-recheck
+# ═════════════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/face-recheck",
+    summary="Continuous background face verification and proxy detection",
+)
+async def face_recheck(
+    frame: UploadFile = File(...),
+    payload: dict = Depends(_get_payload),
+    db=Depends(get_db),
+):
+    """
+    Receives a webcam frame every ~30s from the frontend.
+    1. Runs YOLO to detect multiple persons in the frame.
+    2. Runs DeepFace to verify identity against the enrolled face.
+    """
+    session_id = payload.get("session_id", "")
+    candidate_id = payload.get("candidate_id", "")
+
+    if not session_id or not candidate_id:
+        raise HTTPException(status_code=400, detail="Missing auth payload")
+
+    # Read image
+    img_bytes = await frame.read()
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    if image is None:
+        raise HTTPException(status_code=400, detail="Invalid image frame")
+
+    # 1. YOLO Proxy Detection (Multiple Persons)
+    try:
+        person_count = proxy_detector.analyze_frame(image)
+        if person_count > 1:
+            logger.warning(f"MULTIPLE PERSONS ({person_count}) detected in session {session_id}")
+            # Audit log
+            log_event(
+                session_id=session_id,
+                event_type="MULTIPLE_PERSONS_DETECTED",
+                detail={"person_count": person_count},
+                db_session=db
+            )
+            # Notify via websocket
+            alert_msg = _build_message(MULTIPLE_PERSONS_ALERT, {"session_id": session_id, "person_count": person_count})
+            await ws_manager.send_to_candidate(session_id, alert_msg)
+            await ws_manager.send_to_recruiter(session_id, alert_msg)
+    except Exception as e:
+        logger.error(f"ProxyDetector error: {e}")
+
+    # 2. Face Identity Verification
+    try:
+        result = verify_face(candidate_id, image, db)
+        similarity = result.get("similarity", 0.0)
+        
+        # Log the check
+        log_event(
+            session_id=session_id,
+            event_type="FACE_RECHECK",
+            detail={"similarity": similarity, "verified": result.get("verified")},
+            db_session=db
+        )
+
+        # Threshold check for Step-Up TOTP (0.35 from config, let's say < 0.35 triggers TOTP)
+        import config
+        if similarity < config.FACE_SIMILARITY_THRESHOLD:
+            logger.warning(f"IDENTITY_MISMATCH in session {session_id} (sim: {similarity:.4f})")
+            log_event(
+                session_id=session_id,
+                event_type="IDENTITY_MISMATCH",
+                detail={"similarity": similarity},
+                db_session=db
+            )
+            # Trigger TOTP
+            await trigger_step_up_totp(session_id, ws_manager)
+            return {"status": "identity_mismatch", "similarity": similarity}
+            
+    except Exception as e:
+        logger.error(f"verify_face error during face-recheck: {e}")
+        return {"status": "error", "detail": str(e)}
+
+    return {"status": "ok", "message": "Face recheck passed"}

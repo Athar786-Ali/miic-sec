@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  # ── Ollama LLM (local, M1-native) ────────────────────────────────────────
+  ollama:
+    image: ollama/ollama
+    platform: linux/arm64        # M1 Mac native
+    container_name: miic_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: miic_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./keys:/app/keys
+      - ./reports:/app/reports
+      - ./backend/miic_sec.db:/app/miic_sec.db
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      OLLAMA_URL: http://ollama:11434
+    env_file:
+      - .env
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── React Frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: miic_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
