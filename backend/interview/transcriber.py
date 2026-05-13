@@ -19,6 +19,8 @@ import logging
 import os
 import subprocess
 import tempfile
+import contextlib
+import wave
 
 import whisper
 
@@ -94,7 +96,33 @@ def _convert_to_wav(input_path: str, output_path: str) -> bool:
     return False
 
 
-def transcribe_audio(audio_bytes: bytes) -> dict:
+def _guess_input_suffix(filename: str | None, content_type: str | None) -> str:
+    """
+    Pick a temp-file suffix based on the incoming filename / content-type.
+    This helps ffmpeg auto-detect correctly (especially for WAV uploads).
+    """
+    name = (filename or "").lower()
+    ctype = (content_type or "").lower()
+
+    for ext in (".wav", ".webm", ".weba", ".ogg", ".oga", ".mp4", ".m4a", ".mp3"):
+        if name.endswith(ext):
+            return ext
+
+    if "wav" in ctype:
+        return ".wav"
+    if "ogg" in ctype:
+        return ".ogg"
+    if "mp4" in ctype:
+        return ".m4a"
+    if "mpeg" in ctype or "mp3" in ctype:
+        return ".mp3"
+    if "webm" in ctype:
+        return ".webm"
+
+    return ".webm"
+
+
+def transcribe_audio(audio_bytes: bytes, filename: str | None = None, content_type: str | None = None) -> dict:
     """
     Transcribe audio bytes (webm/ogg/wav/mp4 …) to text.
 
@@ -105,21 +133,18 @@ def transcribe_audio(audio_bytes: bytes) -> dict:
         { "transcript": str, "confidence": float }
 
     Raises:
-        RuntimeError on transcription failure
+        ValueError for invalid/unusable audio (client error)
+        RuntimeError for unexpected transcription failures (server error)
     """
     if not audio_bytes:
         raise RuntimeError("Empty audio data received.")
 
-    if len(audio_bytes) < 1000:
-        # Suspiciously small — likely a muted / empty recording
-        logger.warning("Audio too short (%d bytes) — returning empty transcript.", len(audio_bytes))
-        return {"transcript": "", "confidence": 0.0}
-
     webm_tmp = None
     wav_tmp  = None
     try:
-        # 1. Write incoming bytes to a temp .webm file
-        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+        # 1. Write incoming bytes to a temp file
+        input_suffix = _guess_input_suffix(filename, content_type)
+        with tempfile.NamedTemporaryFile(suffix=input_suffix, delete=False) as f:
             f.write(audio_bytes)
             webm_tmp = f.name
 
@@ -129,27 +154,54 @@ def transcribe_audio(audio_bytes: bytes) -> dict:
 
         converted = _convert_to_wav(webm_tmp, wav_tmp)
 
-        # Choose which file to feed Whisper
-        input_file = wav_tmp if converted else webm_tmp
+        if not converted or not os.path.exists(wav_tmp):
+            raise ValueError("Could not decode audio. Please check your microphone and try again.")
+
+        # Duration validation (more reliable than checking container byte size)
+        try:
+            with contextlib.closing(wave.open(wav_tmp, "rb")) as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate() or 0
+                duration_s = (frames / float(rate)) if rate else 0.0
+            if duration_s < 0.8:
+                raise ValueError("Audio recording too short. Please record at least 1 second and speak clearly.")
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning("Could not parse WAV duration (%s). Continuing anyway.", exc)
+
+        input_file = wav_tmp
 
         # 3. Transcribe
         model = _get_model()
         logger.info("Transcribing %s …", input_file)
-        result = model.transcribe(
-            input_file,
-            fp16=False,          # CPU safe
-            language=None,       # auto-detect language
-            task="transcribe",
-        )
+        try:
+            result = model.transcribe(
+                input_file,
+                fp16=False,                       # CPU safe
+                language=None,                    # auto-detect language
+                task="transcribe",
+                condition_on_previous_text=False, # avoids failure loops on short audio
+                temperature=0.0,
+                no_speech_threshold=0.3,
+                verbose=False,
+            )
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "Failed to load audio" in msg or "Invalid data found when processing input" in msg:
+                raise ValueError("Could not decode audio. Please check your microphone and try again.") from exc
+            raise
 
         transcript = result.get("text", "").strip()
         logger.info("Transcript (%d chars): %s", len(transcript), transcript[:80])
 
         return {
             "transcript":  transcript,
-            "confidence":  0.95,
+            "confidence":  0.95 if transcript else 0.0,
         }
 
+    except ValueError:
+        raise
     except Exception as exc:
         logger.exception("Transcription error: %s", exc)
         raise RuntimeError(f"Transcription failed: {exc}") from exc

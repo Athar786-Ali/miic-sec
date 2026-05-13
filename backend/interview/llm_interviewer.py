@@ -34,6 +34,31 @@ MODEL_PREFERENCES = [config.OLLAMA_MODEL, config.OLLAMA_FALLBACK_MODEL]
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Session helpers
+# ═══════════════════════════════════════════════════════════════════
+
+def get_session_status(session_id: str) -> dict:
+    """
+    Return live progress for a session (used by GET /interview/status).
+    """
+    if session_id not in session_store:
+        raise KeyError(f"Session '{session_id}' not found.")
+
+    state = session_store[session_id]
+    scores = state.get("scores", []) or []
+    avg = round(sum(scores) / len(scores), 2) if scores else 0.0
+
+    return {
+        "session_id": session_id,
+        "question_number": int(state.get("question_count", 0) or 0),
+        "difficulty": state.get("difficulty", "medium"),
+        "average_score": avg,
+        "scores": scores,
+        "job_role": state.get("job_role"),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 1. check_ollama_running
 # ═══════════════════════════════════════════════════════════════════
 

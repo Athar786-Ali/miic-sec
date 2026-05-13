@@ -9,19 +9,44 @@ const WS_BASE = 'ws://localhost:8000'
 function useVoiceInput({ onTranscribed, onError }) {
   const [voiceState, setVoiceState] = useState('IDLE') // IDLE, RECORDING, TRANSCRIBING, DONE, ERROR
   const [recSecs, setRecSecs]       = useState(0)
+  const [previewUrl, setPreviewUrl] = useState('')
   const mediaRecorderRef = useRef(null)
   const chunksRef        = useRef([])
   const timerRef         = useRef(null)
   const streamRef        = useRef(null)
+  const startedAtRef     = useRef(0)
+  const stopDelayRef     = useRef(null)
+  const MIN_RECORD_MS    = 1400 // keep enough audio for ffmpeg/Whisper to detect speech
 
   // Pick best supported MIME type
   const getSupportedMime = () => {
     const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
-    return types.find(t => MediaRecorder.isTypeSupported(t)) || ''
+    return types.find(t => {
+      try { return MediaRecorder.isTypeSupported(t) } catch { return false }
+    }) || ''
   }
 
   const start = async () => {
     try {
+      clearInterval(timerRef.current)
+      clearTimeout(stopDelayRef.current)
+      if (previewUrl) {
+        try { URL.revokeObjectURL(previewUrl) } catch {}
+        setPreviewUrl('')
+      }
+      try {
+        const prev = mediaRecorderRef.current
+        if (prev) {
+          prev.ondataavailable = null
+          prev.onstop = null
+          prev.onerror = null
+          if (prev.state === 'recording') prev.stop()
+        }
+      } catch {}
+      streamRef.current?.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+      mediaRecorderRef.current = null
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
       streamRef.current = stream
       const mimeType = getSupportedMime()
@@ -29,7 +54,9 @@ function useVoiceInput({ onTranscribed, onError }) {
       chunksRef.current = []
       setRecSecs(0)
 
-      // Collect data every 250ms for reliability
+      // Collect chunks. Important: do NOT pass a timeslice to start().
+      // Some browsers can produce empty/tiny blobs when stop() is called
+      // before the first slice is produced.
       mr.ondataavailable = e => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data) }
 
       mr.onstop = async () => {
@@ -39,18 +66,29 @@ function useVoiceInput({ onTranscribed, onError }) {
 
         if (chunksRef.current.length === 0) {
           setVoiceState('ERROR')
-          onError?.('No audio data captured. Please try again.')
+          onError?.('No audio data captured. Please check your microphone and try again.')
           return
         }
 
-        const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
-        const ext  = mimeType?.includes('ogg') ? 'ogg' : mimeType?.includes('mp4') ? 'mp4' : 'webm'
+        const finalType = mr.mimeType || mimeType || 'audio/webm'
+        const blob = new Blob(chunksRef.current, { type: finalType })
+        try {
+          const url = URL.createObjectURL(blob)
+          setPreviewUrl(url)
+        } catch {}
+        if (blob.size < 1024) {
+          // Usually indicates silence / muted mic / device error
+          setVoiceState('ERROR')
+          onError?.('No microphone audio captured (muted/silent). Check mic permission/device and try again (hold ≥1s and speak clearly).')
+          return
+        }
+
+        const ext  = finalType.includes('ogg') ? 'ogg' : finalType.includes('mp4') ? 'mp4' : 'webm'
         const formData = new FormData()
         formData.append('audio_file', blob, `answer.${ext}`)
 
         try {
           const { data } = await api.post('/interview/transcribe', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
             timeout: 120000,
           })
           const text = (data.transcript || '').trim()
@@ -72,7 +110,8 @@ function useVoiceInput({ onTranscribed, onError }) {
       }
 
       mediaRecorderRef.current = mr
-      mr.start(250)  // fire ondataavailable every 250ms
+      startedAtRef.current = Date.now()
+      mr.start() // no timeslice — emit one final blob on stop
       setVoiceState('RECORDING')
 
       // Live recording timer
@@ -89,21 +128,47 @@ function useVoiceInput({ onTranscribed, onError }) {
   }
 
   const stop = () => {
-    clearInterval(timerRef.current)
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop()
+    const mr = mediaRecorderRef.current
+    if (!mr || mr.state !== 'recording') return
+
+    const elapsed = Date.now() - startedAtRef.current
+    if (elapsed < MIN_RECORD_MS) {
+      // Keep recording until we reach a safe minimum duration.
+      clearTimeout(stopDelayRef.current)
+      stopDelayRef.current = setTimeout(() => stop(), MIN_RECORD_MS - elapsed)
+      return
     }
+
+    clearInterval(timerRef.current)
+    try { mr.requestData?.() } catch {}
+    mr.stop()
   }
 
   const reset = () => {
     clearInterval(timerRef.current)
+    clearTimeout(stopDelayRef.current)
+    if (previewUrl) {
+      try { URL.revokeObjectURL(previewUrl) } catch {}
+      setPreviewUrl('')
+    }
+    try {
+      const mr = mediaRecorderRef.current
+      if (mr) {
+        mr.ondataavailable = null
+        mr.onstop = null
+        mr.onerror = null
+        if (mr.state === 'recording') mr.stop()
+      }
+    } catch {}
     streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+    mediaRecorderRef.current = null
     chunksRef.current = []
     setRecSecs(0)
     setVoiceState('IDLE')
   }
 
-  return { voiceState, recSecs, start, stop, reset }
+  return { voiceState, recSecs, previewUrl, start, stop, reset }
 }
 
 // ── Webcam component (continuous capture for face verify) ─────────
@@ -288,7 +353,7 @@ export default function Interview() {
   const [voiceError, setVoiceError] = useState('')
   const [inputMode, setInputMode]   = useState('voice') // 'voice' | 'text'
 
-  const { voiceState, recSecs, start: startVoice, stop: stopVoice, reset: resetVoice } = useVoiceInput({
+  const { voiceState, recSecs, previewUrl, start: startVoice, stop: stopVoice, reset: resetVoice } = useVoiceInput({
     onTranscribed: useCallback(text => {
       setAnswer(text)
       setVoiceError('')
@@ -628,6 +693,15 @@ export default function Interview() {
                     : <span style={{ color: 'var(--clr-text-muted)', fontStyle: 'italic' }}>Transcribed text will appear here…</span>
                   }
                 </div>
+
+                {/* Recorded-audio preview (helps confirm mic capture) */}
+                {previewUrl && (
+                  <audio
+                    controls
+                    src={previewUrl}
+                    style={{ width: '100%', marginBottom: 16 }}
+                  />
+                )}
 
                 {/* Action buttons row */}
                 <div style={{ display: 'flex', width: '100%', gap: 10 }}>

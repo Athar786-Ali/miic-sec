@@ -105,7 +105,7 @@ async def transcribe(
         audio_file.content_type,
     )
 
-    if not audio_bytes or len(audio_bytes) < 500:
+    if not audio_bytes or len(audio_bytes) < 100:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Audio file is empty or too short. Please record at least 1 second of speech.",
@@ -120,12 +120,23 @@ async def transcribe(
     # ── Run synchronous transcription in thread pool ──────────────
     try:
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, transcribe_audio, audio_bytes)
+        result = await loop.run_in_executor(
+            None,
+            transcribe_audio,
+            audio_bytes,
+            audio_file.filename,
+            audio_file.content_type,
+        )
         logger.info(
             "Transcription success — transcript_len=%d",
             len(result.get("transcript", "")),
         )
         return result
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
     except RuntimeError as exc:
         logger.error("Transcription RuntimeError: %s", exc)
         raise HTTPException(
