@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Editor from '@monaco-editor/react'
 import api, { getAuth, clearAuth } from '../utils/api'
 import InterviewSetup from './InterviewSetup'
 
@@ -315,52 +316,356 @@ function StepUpTotp({ sessionId, onPassed }) {
   )
 }
 
-// ── Code editor panel ─────────────────────────────────────────────
-function CodePanel({ templateCode }) {
-  const [code, setCode]       = useState(templateCode || '# Write your solution here\n')
-  const [lang, setLang]       = useState('python')
-  const [result, setResult]   = useState(null)
-  const [running, setRunning] = useState(false)
+// ── Language configs ──────────────────────────────────────────────
+const LANG_CONFIG = {
+  python: {
+    label: 'Python 3',
+    monacoId: 'python',
+    icon: '🐍',
+    defaultCode: `# Write your solution here
+# Press Ctrl+Enter or ▶ Run to execute
 
-  // When template updates, update code
+def solution():
+    pass
+
+print(solution())
+`,
+  },
+  javascript: {
+    label: 'JavaScript',
+    monacoId: 'javascript',
+    icon: '🟨',
+    defaultCode: `// Write your solution here
+// Press Ctrl+Enter or ▶ Run to execute
+
+function solution() {
+    
+}
+
+console.log(solution());
+`,
+  },
+  java: {
+    label: 'Java',
+    monacoId: 'java',
+    icon: '☕',
+    defaultCode: `// Write your solution here
+public class Solution {
+    public static void main(String[] args) {
+        // your code here
+    }
+}
+`,
+  },
+  cpp: {
+    label: 'C++',
+    monacoId: 'cpp',
+    icon: '⚙️',
+    defaultCode: `#include <iostream>
+using namespace std;
+
+int main() {
+    // your code here
+    return 0;
+}
+`,
+  },
+}
+
+// ── LeetCode-style Monaco Code Panel ──────────────────────────────
+function CodePanel({ templateCode }) {
+  const [lang,      setLang]      = useState('python')
+  const [fontSize,  setFontSize]  = useState(14)
+  const [result,    setResult]    = useState(null)
+  const [running,   setRunning]   = useState(false)
+  const [activeTab, setActiveTab] = useState('editor') // 'editor' | 'output'
+  const [execTime,  setExecTime]  = useState(null)
+  const editorRef = useRef(null)
+
+  // code per language, seeded with defaults
+  const [codeMap, setCodeMap] = useState(() =>
+    Object.fromEntries(Object.entries(LANG_CONFIG).map(([k, v]) => [k, v.defaultCode]))
+  )
+
+  // When a DSA template arrives, inject it into current language slot
   useEffect(() => {
-    if (templateCode) setCode(templateCode)
-  }, [templateCode])
+    if (templateCode) {
+      setCodeMap(prev => ({ ...prev, [lang]: templateCode }))
+    }
+  }, [templateCode]) // eslint-disable-line
+
+  const currentCode = codeMap[lang] || ''
+
+  const handleEditorChange = (val) => {
+    setCodeMap(prev => ({ ...prev, [lang]: val || '' }))
+  }
+
+  const handleLangChange = (newLang) => {
+    setLang(newLang)
+    setResult(null)
+  }
 
   const run = async () => {
+    const code = editorRef.current?.getValue() || currentCode
+    if (!code.trim()) return
     setRunning(true)
-    try { const { data } = await api.post('/interview/execute-code', { code, language: lang }); setResult(data) }
-    catch { setResult({ passed: false, stderr: 'Execution error' }) }
-    finally { setRunning(false) }
+    setResult(null)
+    setActiveTab('output')
+    const t0 = Date.now()
+    try {
+      const { data } = await api.post('/interview/execute-code', { code, language: lang })
+      setExecTime(Date.now() - t0)
+      setResult(data)
+    } catch (e) {
+      setExecTime(Date.now() - t0)
+      setResult({ passed: false, stderr: e.response?.data?.detail || 'Execution error — check backend.' })
+    } finally {
+      setRunning(false)
+    }
   }
+
+  const resetCode = () => {
+    const fresh = LANG_CONFIG[lang].defaultCode
+    setCodeMap(prev => ({ ...prev, [lang]: fresh }))
+    editorRef.current?.setValue(fresh)
+    setResult(null)
+  }
+
+  // Ctrl+Enter shortcut inside Monaco
+  const handleEditorMount = (editor, monaco) => {
+    editorRef.current = editor
+    editor.addAction({
+      id: 'run-code',
+      label: 'Run Code',
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+      run: () => run(),
+    })
+    // Configure editor settings
+    editor.updateOptions({
+      fontLigatures: true,
+      smoothScrolling: true,
+      cursorSmoothCaretAnimation: 'on',
+    })
+  }
+
+  const cfg = LANG_CONFIG[lang]
+
   return (
-    <div className="card" style={{ marginTop: 24, background: '#1e1e1e', borderColor: '#333' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h3 style={{ margin: 0, color: '#d4d4d4', fontSize: '0.9rem' }}>💻 Code Editor</h3>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <select value={lang} onChange={e => setLang(e.target.value)} className="input" style={{ width: 120, padding: '4px 8px', background: '#2d2d2d', borderColor: '#444', color: '#ccc' }}>
-            <option value="python">Python</option><option value="javascript">JavaScript</option>
-            <option value="java">Java</option><option value="cpp">C++</option>
-          </select>
-          <button className="btn btn-primary" disabled={running} onClick={run} style={{ padding: '6px 16px', background: '#0e639c' }}>
-            {running ? <span className="spinner" /> : '▶ Run Code'}
-          </button>
+    <div style={{
+      marginTop: 24,
+      borderRadius: 'var(--r-md)',
+      overflow: 'hidden',
+      border: '1px solid #3c3c3c',
+      background: '#1e1e1e',
+      display: 'flex',
+      flexDirection: 'column',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+    }}>
+
+      {/* ── Editor toolbar ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 12px',
+        background: '#252526',
+        borderBottom: '1px solid #3c3c3c',
+        flexWrap: 'wrap',
+      }}>
+        {/* Language pills */}
+        <div style={{ display: 'flex', gap: 4, marginRight: 8 }}>
+          {Object.entries(LANG_CONFIG).map(([k, v]) => (
+            <button
+              key={k}
+              id={`lang-btn-${k}`}
+              onClick={() => handleLangChange(k)}
+              style={{
+                padding: '3px 10px', borderRadius: 4, fontSize: '0.75rem', fontWeight: 600,
+                cursor: 'pointer', transition: 'all 0.15s',
+                background: lang === k ? '#0e639c' : '#2d2d2d',
+                color: lang === k ? '#fff' : '#9d9d9d',
+                border: `1px solid ${lang === k ? '#0e639c' : '#3c3c3c'}`,
+              }}
+            >
+              {v.icon} {v.label}
+            </button>
+          ))}
         </div>
+
+        {/* Spacer */}
+        <div style={{ flex: 1 }} />
+
+        {/* Font size */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button onClick={() => setFontSize(s => Math.max(10, s - 1))} style={{ background: '#2d2d2d', border: '1px solid #3c3c3c', color: '#ccc', borderRadius: 3, padding: '1px 6px', cursor: 'pointer', fontSize: '0.8rem' }}>A-</button>
+          <span style={{ fontSize: '0.72rem', color: '#666', minWidth: 20, textAlign: 'center' }}>{fontSize}</span>
+          <button onClick={() => setFontSize(s => Math.min(24, s + 1))} style={{ background: '#2d2d2d', border: '1px solid #3c3c3c', color: '#ccc', borderRadius: 3, padding: '1px 6px', cursor: 'pointer', fontSize: '0.8rem' }}>A+</button>
+        </div>
+
+        {/* Reset */}
+        <button onClick={resetCode} style={{ background: '#2d2d2d', border: '1px solid #3c3c3c', color: '#9d9d9d', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>
+          ↺ Reset
+        </button>
+
+        {/* Run button */}
+        <button
+          id="run-code-btn"
+          onClick={run}
+          disabled={running}
+          style={{
+            padding: '5px 16px', borderRadius: 4, fontSize: '0.82rem', fontWeight: 700,
+            background: running ? '#555' : '#16825d',
+            color: '#fff', border: 'none', cursor: running ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 6,
+            transition: 'background 0.2s',
+          }}
+        >
+          {running
+            ? <><span className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} /> Running…</>
+            : <>▶ Run <span style={{ fontSize: '0.68rem', opacity: 0.7, fontWeight: 400 }}>Ctrl+↵</span></>
+          }
+        </button>
       </div>
-      <textarea value={code} onChange={e => setCode(e.target.value)}
-        style={{ width: '100%', minHeight: 280, fontFamily: 'var(--font-mono)', fontSize: '0.9rem',
-          background: '#1e1e1e', border: '1px solid #333', borderRadius: 'var(--r-sm)',
-          padding: 16, color: '#d4d4d4', resize: 'vertical', boxSizing: 'border-box' }} />
-      {result && (
-        <div style={{ marginTop: 12, padding: 12, background: '#252526', borderRadius: 'var(--r-sm)', fontSize: '0.85rem', fontFamily: 'var(--font-mono)', border: '1px solid #333' }}>
-          <div style={{ color: result.passed ? 'var(--clr-success)' : 'var(--clr-danger)', marginBottom: 6, fontWeight: 600 }}>
-            {result.passed ? '✓ Tests Passed' : '✗ Tests Failed'} {result.execution_time_ms != null ? `· ${result.execution_time_ms}ms` : ''}
+
+      {/* ── Tab bar: Editor / Output ── */}
+      <div style={{ display: 'flex', background: '#252526', borderBottom: '1px solid #3c3c3c' }}>
+        {['editor', 'output'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            style={{
+              padding: '6px 18px', fontSize: '0.78rem', fontWeight: 600,
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: activeTab === tab ? '#fff' : '#888',
+              borderBottom: `2px solid ${activeTab === tab ? '#0e639c' : 'transparent'}`,
+              transition: 'all 0.15s', textTransform: 'capitalize',
+            }}
+          >
+            {tab === 'editor' ? '📝 Code' : `🖥 Output${result ? (result.passed ? ' ✓' : ' ✗') : ''}`}
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: '0.7rem', color: '#555', alignSelf: 'center', paddingRight: 12 }}>
+          {cfg.label} · {currentCode.split('\n').length} lines
+        </span>
+      </div>
+
+      {/* ── Monaco Editor ── */}
+      <div style={{ display: activeTab === 'editor' ? 'block' : 'none' }}>
+        <Editor
+          height="380px"
+          language={cfg.monacoId}
+          value={currentCode}
+          theme="vs-dark"
+          onChange={handleEditorChange}
+          onMount={handleEditorMount}
+          options={{
+            fontSize,
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+            fontLigatures: true,
+            minimap: { enabled: true, scale: 1 },
+            lineNumbers: 'on',
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            tabSize: 4,
+            wordWrap: 'on',
+            renderLineHighlight: 'all',
+            bracketPairColorization: { enabled: true },
+            guides: { bracketPairs: true, indentation: true },
+            smoothScrolling: true,
+            cursorBlinking: 'smooth',
+            padding: { top: 12, bottom: 12 },
+            suggestOnTriggerCharacters: true,
+            quickSuggestions: true,
+            scrollbar: {
+              verticalScrollbarSize: 8,
+              horizontalScrollbarSize: 8,
+            },
+          }}
+        />
+      </div>
+
+      {/* ── Output Panel ── */}
+      <div style={{ display: activeTab === 'output' ? 'flex' : 'none', flexDirection: 'column', minHeight: 380 }}>
+        {running ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: '#888' }}>
+            <span className="spinner" style={{ width: 28, height: 28, borderWidth: 3, borderColor: '#0e639c', borderTopColor: 'transparent' }} />
+            <span style={{ fontSize: '0.85rem' }}>Executing in sandbox…</span>
           </div>
-          {result.stdout && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#ccc' }}>{result.stdout}</pre>}
-          {result.stderr && <pre style={{ margin: 0, color: '#f48771', whiteSpace: 'pre-wrap', marginTop: 8 }}>{result.stderr}</pre>}
-          {result.static_issues?.length > 0 && <div style={{ marginTop: 8, color: '#cca700' }}>⚠ {result.static_issues.join(', ')}</div>}
-        </div>
-      )}
+        ) : !result ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, color: '#555' }}>
+            <div style={{ fontSize: '2.5rem' }}>▶</div>
+            <div style={{ fontSize: '0.85rem' }}>Press Run or Ctrl+Enter to execute your code</div>
+          </div>
+        ) : (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            {/* Status bar */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+              background: result.passed ? 'rgba(22,130,93,0.15)' : 'rgba(205,49,49,0.15)',
+              borderBottom: `1px solid ${result.passed ? '#16825d' : '#cd3131'}`,
+            }}>
+              <span style={{ fontSize: '1.2rem' }}>{result.passed ? '✅' : '❌'}</span>
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: result.passed ? '#4ec9b0' : '#f48771' }}>
+                  {result.passed ? 'All Tests Passed' : result.timed_out ? 'Time Limit Exceeded' : 'Runtime Error / Failed'}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#888', marginTop: 2 }}>
+                  {execTime != null && `${execTime}ms total`}
+                  {result.execution_time_ms != null && ` · ${result.execution_time_ms}ms exec`}
+                </div>
+              </div>
+              {result.static_issues?.length > 0 && (
+                <div style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#cca700', padding: '2px 8px', background: 'rgba(204,167,0,0.1)', borderRadius: 4, border: '1px solid #cca700' }}>
+                  ⚠ {result.static_issues.length} security warning{result.static_issues.length > 1 ? 's' : ''}
+                </div>
+              )}
+            </div>
+
+            {/* stdout */}
+            {result.stdout && (
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid #3c3c3c' }}>
+                <div style={{ fontSize: '0.7rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>stdout</div>
+                <pre style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', color: '#d4d4d4', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{result.stdout}</pre>
+              </div>
+            )}
+
+            {/* stderr */}
+            {result.stderr && (
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid #3c3c3c' }}>
+                <div style={{ fontSize: '0.7rem', color: '#f48771', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>stderr / error</div>
+                <pre style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', color: '#f48771', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{result.stderr}</pre>
+              </div>
+            )}
+
+            {/* Static issues */}
+            {result.static_issues?.length > 0 && (
+              <div style={{ padding: '12px 16px' }}>
+                <div style={{ fontSize: '0.7rem', color: '#cca700', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>security analysis</div>
+                {result.static_issues.map((iss, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6 }}>
+                    <span style={{ color: iss.severity === 'HIGH' ? '#f48771' : '#cca700', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 }}>[{iss.severity}]</span>
+                    <span style={{ fontSize: '0.82rem', color: '#ccc' }}>{iss.message || iss}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Status bar (VS Code style) ── */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '3px 12px',
+        background: '#007acc',
+        fontSize: '0.7rem', color: 'rgba(255,255,255,0.85)',
+      }}>
+        <span>{cfg.icon} {cfg.label}</span>
+        <span style={{ display: 'flex', gap: 16 }}>
+          <span>UTF-8</span>
+          <span>Tab Size: 4</span>
+          <span>MIIC-Sec Sandbox</span>
+        </span>
+      </div>
     </div>
   )
 }
@@ -815,12 +1120,18 @@ export default function Interview() {
               </div>
             )}
             
-            {/* If DSA Question, show Editor */}
+            {/* If DSA Question, show Monaco Editor */}
             {isDsa && (
               <div style={{ marginTop: 32 }}>
-                <div className="divider" style={{ margin: '0 0 24px' }} />
-                <h3 style={{ margin: '0 0 8px', color: 'var(--clr-primary)' }}>Coding Exercise</h3>
-                <p style={{ color: 'var(--clr-text-muted)', fontSize: '0.9rem', marginBottom: 0 }}>Implement the requested function in the editor below. Use the voice input above to explain your approach.</p>
+                <div className="divider" style={{ margin: '0 0 16px' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                  <span style={{ fontSize: '1.1rem' }}>💻</span>
+                  <h3 style={{ margin: 0, color: 'var(--clr-primary)', fontSize: '1rem' }}>Coding Exercise</h3>
+                  <span style={{ fontSize: '0.72rem', padding: '2px 8px', background: 'rgba(99,102,241,0.15)', borderRadius: 20, color: 'var(--clr-primary)', border: '1px solid rgba(99,102,241,0.3)' }}>Monaco Editor</span>
+                </div>
+                <p style={{ color: 'var(--clr-text-muted)', fontSize: '0.85rem', marginBottom: 0 }}>
+                  Implement the function below. Use the voice/text input above to explain your approach before submitting.
+                </p>
                 <CodePanel templateCode={templateCode} />
               </div>
             )}
