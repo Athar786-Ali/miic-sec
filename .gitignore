@@ -16,3 +16,5 @@ build/
 reports/*
 !reports/.gitkeep
 
+backend/reports/*
+!backend/reports/.gitkeep
