@@ -216,9 +216,12 @@ def _parse_evaluation(text: str) -> dict:
             next_question = remainder
 
     return {
-        "score": score,
-        "feedback": feedback.strip(),
+        "score":         score,
+        "feedback":      feedback.strip(),
         "next_question": next_question.strip(),
+        # Phase 4: split coaching-tone feedback on | separator
+        "what_was_good": feedback.split("|")[0].strip() if "|" in feedback else feedback.strip(),
+        "improve_tip":   feedback.split("|")[1].strip() if "|" in feedback else "",
     }
 
 
@@ -296,14 +299,17 @@ def start_session(
         )
 
     system_prompt = (
-        f"You are a strict technical interviewer for a {job_role} position."
+        f"You are a supportive, expert technical interviewer for a {job_role} position."
         f"{company_hint}"
         f"{topic_hint}{resume_hint} "
         f"Ask exactly ONE technical question at a time. "
         f"You have {max_questions} questions total. "
         "Start with a medium difficulty question. "
         "Wait for the candidate response before evaluating. "
-        "Never reveal answers. Be professional and concise."
+        "Never reveal answers directly. Be professional, concise, and encouraging.\n\n"
+        "FEEDBACK STYLE: Always frame feedback as a supportive coach, not a harsh judge. "
+        "Acknowledge what the candidate did well first, then give ONE specific, actionable improvement tip. "
+        "Never be discouraging. Your goal is to help the student grow and build confidence."
     )
 
     messages = [
@@ -389,25 +395,27 @@ def submit_response(session_id: str, candidate_response: str) -> dict:
 
     max_questions = state.get("max_questions", 10)
 
-    # Build evaluation prompt — if last question, tell LLM to close off
+    # Build evaluation prompt — coaching tone, structured format
+    coaching_format = (
+        "Format your response EXACTLY as (no extra text before or after):\n"
+        "SCORE: <number 0-10>\n"
+        "FEEDBACK: <what was good about the answer> | <one specific thing to improve next time>\n"
+        "NEXT_QUESTION: <question>"
+    )
+
     if state["question_count"] >= max_questions:
         evaluation_instruction = (
-            "Evaluate the above response. Give a score 0-10. "
-            "This was the final question, so do NOT ask another question. "
-            "Format your response EXACTLY as:\n"
-            "SCORE: <number>\n"
-            "FEEDBACK: <one sentence>\n"
-            "NEXT_QUESTION: Thank you for completing the interview."
+            "Evaluate the candidate's final answer as a supportive coach. Give a score 0-10. "
+            "Acknowledge one thing they did well and give one growth tip. "
+            "This was the final question — do NOT ask another. Use: NEXT_QUESTION: Thank you for completing the interview. You've done a great job practicing today!\n\n"
+            + coaching_format.replace("<question>", "Thank you for completing the interview. You've done a great job practicing today!")
         )
     else:
         evaluation_instruction = (
-            "Evaluate the above response. Give a score 0-10. "
-            "Then ask the next question. "
-            f"For the next question: {diff_prompt} "
-            "Format your response EXACTLY as:\n"
-            "SCORE: <number>\n"
-            "FEEDBACK: <one sentence>\n"
-            "NEXT_QUESTION: <question>"
+            "Evaluate the candidate's answer as a supportive coach. Give a score 0-10. "
+            "Acknowledge what they did well, then give one specific improvement tip. "
+            f"Then ask the next question. For the next question: {diff_prompt}\n\n"
+            + coaching_format
         )
 
     # Build messages: system → full history → evaluation instruction

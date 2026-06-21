@@ -45,15 +45,15 @@ function FeedbackSection({ feedback, mode, topics, duration, totalQ }) {
 
   const cards = [
     {
-      title: '✅ Strengths', items: feedback.strengths || [],
-      icon: '✓', border: 'var(--clr-success)', itemColor: 'var(--clr-success)',
+      title: '✅ What You Did Well', items: feedback.strengths || [],
+      icon: '✔', border: 'var(--clr-success)', itemColor: 'var(--clr-success)',
     },
     {
-      title: '⚠ Areas to Improve', items: feedback.weaknesses || [],
-      icon: '✗', border: 'var(--clr-danger)', itemColor: 'var(--clr-danger)',
+      title: '🎯 What to Work On', items: feedback.weaknesses || [],
+      icon: '→', border: 'var(--clr-warning)', itemColor: 'var(--clr-warning)',
     },
     {
-      title: '📚 Topics to Study', items: feedback.topics_to_study || [],
+      title: '📚 Suggested Topics to Revisit', items: feedback.topics_to_study || [],
       icon: '📚', border: 'var(--clr-primary)', itemColor: 'var(--clr-primary)',
     },
   ]
@@ -187,7 +187,17 @@ export default function Report() {
               document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
             } catch { alert('Download failed. Please try again.') }
           }}>
-            ⬇ Download
+            ⬇ Download JSON
+          </button>
+          <button className="btn btn-ghost" onClick={async () => {
+            try {
+              const resp = await api.get(`/report/${sessionId}/pdf`, { responseType: 'blob' })
+              const url  = URL.createObjectURL(resp.data)
+              const a    = document.createElement('a'); a.href = url; a.download = `miic_report_${sessionId.slice(0,8)}.pdf`
+              document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+            } catch { alert('PDF generation failed. Please try again.') }
+          }}>
+            📄 Download PDF
           </button>
           <button
             id="linkedin-share-btn"

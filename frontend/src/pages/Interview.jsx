@@ -689,6 +689,10 @@ export default function Interview() {
   const [answer,      setAnswer]      = useState('')
   const [score,       setScore]       = useState(null)
   const [feedback,    setFeedback]    = useState('')
+  const [whatGood,    setWhatGood]    = useState('')   // Phase 4
+  const [improveTip,  setImproveTip]  = useState('')   // Phase 4
+  const [hint,        setHint]        = useState('')   // Phase 3
+  const [hintLoading, setHintLoading] = useState(false)
   const [qNum,        setQNum]        = useState(1)
   const [difficulty,  setDifficulty]  = useState('medium')
   const [submitting,  setSubmitting]  = useState(false)
@@ -835,6 +839,9 @@ export default function Interview() {
         input_mode: inputMode,
       })
       setScore(data.score); setFeedback(data.feedback)
+      setWhatGood(data.what_was_good || '')   // Phase 4
+      setImproveTip(data.improve_tip || '')   // Phase 4
+      setHint('')                             // Phase 3: clear hint after submit
       setDifficulty(data.difficulty); setQNum(data.question_number)
       setAnswer('')
       resetVoice()
@@ -842,7 +849,7 @@ export default function Interview() {
       if (data.auto_end) { handleEnd() }
       else {
         updateQuestionAndTemplate(data.next_question)
-        setTimeout(() => { setScore(null); setFeedback('') }, 4000)
+        setTimeout(() => { setScore(null); setFeedback(''); setWhatGood(''); setImproveTip('') }, 6000)
       }
     } catch (e) { setError(e.response?.data?.detail || 'Submission failed.') }
     finally { setSubmitting(false) }
@@ -960,10 +967,66 @@ export default function Interview() {
 
             <div className="divider" style={{ margin: '12px 0 24px' }} />
 
-            {/* Score feedback overlay */}
+            {/* Score feedback overlay — Phase 4 coaching tone */}
             {score != null && (
-              <div className={`alert alert-${score >= 7 ? 'success' : score >= 5 ? 'warning' : 'danger'}`} style={{ marginBottom: 20 }}>
-                <strong>Score {score}/10 ·</strong> {feedback}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{
+                    padding: '4px 12px', borderRadius: 20, fontWeight: 700, fontSize: '0.85rem',
+                    background: score >= 7 ? 'rgba(34,197,94,0.15)' : score >= 5 ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)',
+                    color: score >= 7 ? 'var(--clr-success)' : score >= 5 ? 'var(--clr-warning)' : 'var(--clr-danger)',
+                    border: `1px solid ${score >= 7 ? 'var(--clr-success)' : score >= 5 ? 'var(--clr-warning)' : 'var(--clr-danger)'}`,
+                  }}>
+                    {score}/10
+                  </span>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--clr-text-muted)' }}>Answer score</span>
+                </div>
+                {whatGood && (
+                  <div className="feedback-card good">
+                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--clr-success)', marginBottom: 4 }}>✅ What was good</div>
+                    <div style={{ fontSize: '0.87rem', lineHeight: 1.5 }}>{whatGood}</div>
+                  </div>
+                )}
+                {improveTip && (
+                  <div className="feedback-card improve">
+                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--clr-warning)', marginBottom: 4 }}>💡 Next time try</div>
+                    <div style={{ fontSize: '0.87rem', lineHeight: 1.5 }}>{improveTip}</div>
+                  </div>
+                )}
+                {!whatGood && feedback && (
+                  <div className="feedback-card">
+                    <div style={{ fontSize: '0.87rem', lineHeight: 1.5 }}>{feedback}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Phase 3: Hint button — practice mode only */}
+            {config?.pressure_mode !== 'simulated' && !score && question && (
+              <div style={{ marginBottom: 12 }}>
+                {hint ? (
+                  <div className="feedback-card" style={{ borderColor: 'rgba(99,102,241,0.4)', background: 'rgba(99,102,241,0.07)' }}>
+                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--clr-primary)', marginBottom: 4 }}>💭 Hint</div>
+                    <div style={{ fontSize: '0.87rem', lineHeight: 1.5 }}>{hint}</div>
+                    <button onClick={() => setHint('')} style={{ marginTop: 6, background: 'none', border: 'none', color: 'var(--clr-text-muted)', cursor: 'pointer', fontSize: '0.78rem' }}>Dismiss</button>
+                  </div>
+                ) : (
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.78rem', padding: '5px 12px' }}
+                    disabled={hintLoading}
+                    onClick={async () => {
+                      setHintLoading(true)
+                      try {
+                        const { data } = await api.post('/interview/hint', { question_text: question, candidate_response: answer })
+                        setHint(data.hint)
+                      } catch { setHint('Hint: Break the problem into smaller steps and think about which data structure fits best.') }
+                      finally { setHintLoading(false) }
+                    }}
+                  >
+                    {hintLoading ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Getting hint…</> : '💭 Need a hint?'}
+                  </button>
+                )}
               </div>
             )}
 

@@ -109,3 +109,29 @@ async def download_report(
         filename=f"{session_id}_report.json",
         headers={"Content-Disposition": f'attachment; filename="{session_id}_report.json"'},
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GET /report/{session_id}/pdf  (Phase 5)
+# ═════════════════════════════════════════════════════════════════════════════
+
+@router.get("/{session_id}/pdf")
+async def download_report_pdf(
+    session_id: str,
+    payload: dict = Depends(_get_payload),
+    db=Depends(get_db),
+):
+    """Generate and return a single-session report as a PDF. Requires auth."""
+    try:
+        from report.pdf_export import generate_session_pdf
+        pdf_path = generate_session_pdf(session_id, db)
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename=f"miic_report_{session_id[:8]}.pdf",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}")
+

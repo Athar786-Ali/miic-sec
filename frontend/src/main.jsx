@@ -12,11 +12,12 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import './index.css'
 
-import Enrollment from './pages/Enrollment'
-import Login      from './pages/Login'
-import Dashboard  from './pages/Dashboard'
-import Interview  from './pages/Interview'
-import Report     from './pages/Report'
+import Enrollment   from './pages/Enrollment'
+import Login        from './pages/Login'
+import SignupLogin  from './pages/SignupLogin'
+import Dashboard   from './pages/Dashboard'
+import Interview   from './pages/Interview'
+import Report      from './pages/Report'
 import { isAuthenticated } from './utils/api'
 
 /** Guard: redirect to /login if no token in sessionStorage. */
@@ -31,9 +32,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <BrowserRouter>
     <Routes>
       {/* Public */}
-      <Route path="/"       element={<Navigate to="/login" replace />} />
-      <Route path="/enroll" element={<Enrollment />} />
-      <Route path="/login"  element={<Login />} />
+      <Route path="/"        element={<Navigate to="/signup" replace />} />
+      <Route path="/enroll"  element={<Enrollment />} />
+      <Route path="/signup"  element={<SignupLogin />} />
+      <Route path="/login"   element={<Login />} />
 
       {/* Protected — requires sessionStorage token */}
       <Route path="/dashboard" element={
@@ -47,7 +49,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       } />
 
       {/* Fallback */}
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/signup" replace />} />
     </Routes>
   </BrowserRouter>
 )

@@ -42,6 +42,8 @@ from interview.resume_parser import (
 )
 from interview.topic_manager import get_all_topics
 from interview.transcriber import transcribe_audio
+from interview.topic_tracker import update_topics_for_session
+from interview.hint_engine import get_hint
 
 # ─── Router ──────────────────────────────────────────────────────
 router = APIRouter(prefix="/interview", tags=["Interview"])
@@ -386,6 +388,7 @@ async def start_interview(
     selected_topics:     str  = Form("[]"),           # JSON array string e.g. '["os","dbms"]'
     resume_context:      str  = Form(""),             # pre-parsed context from /upload-resume
     company_target:      str  = Form(""),             # "service" | "product" | "startup"
+    pressure_mode:       str  = Form("practice"),    # Phase 3: "practice" | "simulated"
     payload: dict            = Depends(get_token_payload),
     db: DBSession            = Depends(get_db),
 ):
@@ -448,23 +451,36 @@ async def start_interview(
         db_session   = db,
     )
 
-    # Start background emotion analysis thread
-    fq      = Queue(maxsize=10)
-    aq      = Queue(maxsize=5)
-    stop_ev = threading.Event()
+    # ── Store pressure_mode in session record and in-memory store —
+    pressure_mode_clean = pressure_mode if pressure_mode in ("practice", "simulated") else "practice"
+    db_session_row = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if db_session_row:
+        db_session_row.pressure_mode = pressure_mode_clean
+        db.commit()
+    # Also persist in session_store so hint endpoint can check it
+    if session_id in session_store:
+        session_store[session_id]["pressure_mode"] = pressure_mode_clean
 
-    _frame_queues[session_id]  = fq
-    _audio_queues[session_id]  = aq
-    _stop_events[session_id]   = stop_ev
+    # ── Start background emotion analysis thread — ONLY in simulated mode —
+    if pressure_mode_clean == "simulated":
+        fq      = Queue(maxsize=10)
+        aq      = Queue(maxsize=5)
+        stop_ev = threading.Event()
 
-    thread = threading.Thread(
-        target  = run_emotion_analysis_loop,
-        args    = (session_id, fq, aq, emotion_result_store, stop_ev),
-        daemon  = True,
-        name    = f"emotion-{session_id[:8]}",
-    )
-    thread.start()
-    _emotion_threads[session_id] = thread
+        _frame_queues[session_id]  = fq
+        _audio_queues[session_id]  = aq
+        _stop_events[session_id]   = stop_ev
+
+        thread = threading.Thread(
+            target  = run_emotion_analysis_loop,
+            args    = (session_id, fq, aq, emotion_result_store, stop_ev),
+            daemon  = True,
+            name    = f"emotion-{session_id[:8]}",
+        )
+        thread.start()
+        _emotion_threads[session_id] = thread
+    else:
+        logger.info("Practice mode — skipping emotion analysis thread for %s", session_id)
 
     return {
         "session_id":          result["session_id"],
@@ -475,6 +491,7 @@ async def start_interview(
         "interview_mode":      result["interview_mode"],
         "selected_topics":     result["selected_topics"],
         "company_target":      result.get("company_target", ""),
+        "pressure_mode":       pressure_mode_clean,
         "ollama_status":       "connected",
     }
 
@@ -687,6 +704,12 @@ async def end_interview(
     except Exception as exc:
         logger.error("Failed to generate report for %s: %s", session_id, exc)
 
+    # ── Phase 2: Update topic performance per question domain ───────────
+    try:
+        update_topics_for_session(candidate_id, session_id, db)
+    except Exception as exc:
+        logger.error("Topic tracker failed for %s: %s", session_id, exc)
+
     return final
 
 
@@ -702,3 +725,37 @@ async def emotion_snapshot(
     session_id: str = payload["session_id"]
     snapshots = emotion_result_store.get(session_id, [])
     return {"session_id": session_id, "snapshots": snapshots, "count": len(snapshots)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# POST /interview/hint  (Phase 3 — practice mode only)
+# ═══════════════════════════════════════════════════════════════════
+
+class HintRequest(BaseModel):
+    question_text:      str
+    candidate_response: str = ""
+
+
+@router.post("/hint")
+async def get_hint_endpoint(
+    body:    HintRequest,
+    payload: dict = Depends(get_token_payload),
+):
+    """
+    Return a gentle nudge for the current question.
+    Only available in 'practice' pressure_mode — blocked in 'simulated' mode.
+
+    Returns:
+        { hint: str, type: "nudge" }
+    """
+    session_id: str = payload["session_id"]
+
+    # Check pressure mode — deny hints in simulated mode
+    state = session_store.get(session_id, {})
+    if state.get("pressure_mode", "practice") == "simulated":
+        raise HTTPException(
+            status_code=403,
+            detail="Hints are not available in Simulate Real Pressure mode.",
+        )
+
+    return get_hint(body.question_text, body.candidate_response)

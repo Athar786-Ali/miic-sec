@@ -13,6 +13,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Area, AreaChart,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis,
 } from 'recharts'
 import api, { getAuth, clearAuth } from '../utils/api'
 
@@ -67,18 +68,38 @@ const COMPANY_LABELS = {
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 export default function Dashboard() {
   const navigate  = useNavigate()
-  const [data,    setData]    = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState('')
+  const [data,      setData]      = useState(null)
+  const [progress,  setProgress]  = useState(null)   // Phase 2
+  const [loading,   setLoading]   = useState(true)
+  const [error,     setError]     = useState('')
+  const [walkDone,  setWalkDone]  = useState(() =>    // Phase 6
+    localStorage.getItem('miic_walkthrough_dismissed') === '1'
+  )
+  const [pdfLoading, setPdfLoading] = useState(false)  // Phase 5
 
   useEffect(() => {
-    api.get('/user/dashboard')
-      .then(r => setData(r.data))
+    Promise.all([
+      api.get('/user/dashboard'),
+      api.get('/user/progress'),
+    ])
+      .then(([dash, prog]) => { setData(dash.data); setProgress(prog.data) })
       .catch(e => setError(e.response?.data?.detail || 'Could not load dashboard.'))
       .finally(() => setLoading(false))
   }, [])
 
-  const handleLogout = () => { clearAuth(); navigate('/login', { replace: true }) }
+  const handleLogout = () => { clearAuth(); navigate('/signup', { replace: true }) }
+
+  // Phase 5: Download growth PDF
+  const handleGrowthPdf = async () => {
+    setPdfLoading(true)
+    try {
+      const resp = await api.get('/user/progress/pdf', { responseType: 'blob' })
+      const url  = URL.createObjectURL(resp.data)
+      const a    = document.createElement('a'); a.href = url; a.download = 'miic_growth_report.pdf'; a.click()
+      URL.revokeObjectURL(url)
+    } catch { /* silently fail */ }
+    finally { setPdfLoading(false) }
+  }
 
   if (loading) return (
     <div className="page-center">
@@ -92,12 +113,12 @@ export default function Dashboard() {
         <div style={{ fontSize: '3rem', marginBottom: 12 }}>😕</div>
         <h2 style={{ color: 'var(--clr-danger)' }}>Dashboard Error</h2>
         <p style={{ color: 'var(--clr-text-muted)', marginBottom: 20 }}>{error}</p>
-        <Link to="/login" className="btn btn-ghost">← Back to Login</Link>
+        <Link to="/signup" className="btn btn-ghost">← Back to Login</Link>
       </div>
     </div>
   )
 
-  const { candidate, stats, sessions } = data
+  const { candidate, stats, sessions, streak_days = 0 } = data
 
   // Build chart data — chronological (oldest first)
   const chartData = [...sessions]
@@ -164,12 +185,45 @@ export default function Dashboard() {
         </div>
 
         {/* ── Stats row ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 32 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 32 }}>
           <StatCard icon="🎯" label="Total Interviews"     value={stats.total_interviews}           sub="completed sessions"         color="var(--clr-primary)" />
           <StatCard icon="📊" label="Average Score"        value={`${stats.average_score}/10`}      sub="across all sessions"        color="var(--clr-accent)"  />
           <StatCard icon="🏆" label="Personal Best"        value={`${stats.best_score}/10`}         sub="highest single score"       color="var(--clr-success)" />
           <StatCard icon="📅" label="This Month"           value={stats.interviews_this_month}       sub="mock interviews taken"      color="var(--clr-warning)" />
+          <StatCard icon="🔥" label="Practice Streak"      value={`${streak_days}d`}                  sub={streak_days > 0 ? 'days in a row!' : 'start today!'} color="var(--clr-danger)" />
         </div>
+
+        {/* ── Phase 6: First-time walkthrough card ── */}
+        {!walkDone && (
+          <div className="card" style={{ marginBottom: 24, background: 'rgba(99,102,241,0.08)', borderColor: 'var(--clr-primary)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <div>
+                <h3 style={{ margin: '0 0 8px', color: 'var(--clr-primary)' }}>👋 Welcome to MIIC-Sec!</h3>
+                <p style={{ margin: '0 0 12px', fontSize: '0.88rem', color: 'var(--clr-text-muted)', lineHeight: 1.6 }}>
+                  This is your personal interview practice hub. Here's how to get started:
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {[
+                    { n: '1', t: 'Pick Just Practice or Simulate Real Pressure mode' },
+                    { n: '2', t: 'Choose your topics and company target' },
+                    { n: '3', t: 'Answer questions and get instant coaching feedback' },
+                    { n: '4', t: 'Track your progress here over time' },
+                  ].map(step => (
+                    <div key={step.n} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', color: 'var(--clr-text)' }}>
+                      <span style={{ background: 'var(--clr-primary)', color: '#fff', borderRadius: '50%', width: 20, height: 20, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>{step.n}</span>
+                      {step.t}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={() => { localStorage.setItem('miic_walkthrough_dismissed', '1'); setWalkDone(true) }}
+                style={{ background: 'none', border: 'none', color: 'var(--clr-text-muted)', cursor: 'pointer', fontSize: '1.2rem', flexShrink: 0 }}
+                title="Dismiss"
+              >✕</button>
+            </div>
+          </div>
+        )}
 
         {/* ── Score growth chart ── */}
         {chartData.length > 0 ? (
@@ -214,6 +268,70 @@ export default function Dashboard() {
             <button className="btn btn-primary" onClick={() => navigate('/interview')}>
               ▶ Start Your First Interview
             </button>
+          </div>
+        )}
+
+        {/* ── Phase 2: Topic progress radar + focus areas ── */}
+        {progress && progress.topics && progress.topics.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, marginBottom: 24 }}>
+
+            {/* Radar chart */}
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <h2 style={{ margin: 0, fontSize: '1.05rem' }}>🕸️ Your Growth</h2>
+                <button
+                  onClick={handleGrowthPdf}
+                  disabled={pdfLoading}
+                  className="btn btn-ghost"
+                  style={{ fontSize: '0.75rem', padding: '5px 10px' }}
+                >
+                  {pdfLoading ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Generating…</> : '📊 Download PDF'}
+                </button>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <RadarChart data={progress.topics.map(t => ({ topic: t.topic, score: t.avg_score }))}>
+                  <PolarGrid stroke="rgba(99,119,179,0.2)" />
+                  <PolarAngleAxis dataKey="topic" tick={{ fontSize: 11, fill: 'var(--clr-text-muted)' }} />
+                  <Radar name="Score" dataKey="score" stroke="var(--clr-primary)" fill="var(--clr-primary)" fillOpacity={0.2} dot={{ r: 3 }} />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--clr-surface-2)', border: '1px solid var(--clr-border)', borderRadius: 8, fontSize: 12 }}
+                    formatter={v => [`${v.toFixed(1)}/10`, 'Avg Score']}
+                  />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Focus areas + improved topics */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {progress.weak_topics && progress.weak_topics.length > 0 && (
+                <div className="card" style={{ flex: 1 }}>
+                  <h3 style={{ margin: '0 0 12px', fontSize: '0.95rem', color: 'var(--clr-warning)' }}>🎯 Focus Areas</h3>
+                  {progress.weak_topics.map(t => (
+                    <div key={t.topic} style={{ marginBottom: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: '0.85rem' }}>
+                        <span style={{ fontWeight: 600 }}>{t.topic}</span>
+                        <span style={{ color: 'var(--clr-warning)' }}>{t.avg_score.toFixed(1)}/10</span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--clr-text-muted)', lineHeight: 1.4 }}>
+                        💡 {t.tip}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {progress.improved_topics && progress.improved_topics.length > 0 && (
+                <div className="card" style={{ background: 'rgba(34,197,94,0.06)', borderColor: 'rgba(34,197,94,0.3)' }}>
+                  <h3 style={{ margin: '0 0 8px', fontSize: '0.9rem', color: 'var(--clr-success)' }}>⬆️ You've Improved In</h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {progress.improved_topics.map(t => (
+                      <span key={t} style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid var(--clr-success)', color: 'var(--clr-success)', borderRadius: 20, padding: '3px 10px', fontSize: '0.78rem', fontWeight: 600 }}>
+                        {t} ↑
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

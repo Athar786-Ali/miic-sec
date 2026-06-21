@@ -383,14 +383,15 @@ class TestRecommendationLogic:
         db  = _in_memory_db()
         cid, sid = _seed_session(db)
 
-        # Add 3 high-score questions (avg = 9.0 → HIRE)
+        # Add 3 high-score questions (avg = 9.0 → EXCELLENT, was HIRE)
         for q in range(1, 4):
             db.add(InterviewLog(session_id=sid, question_number=q,
                                 question_text=f"Q{q}", response_text="A", score=9.0, difficulty="hard"))
         db.commit()
 
         report = collect_session_data(sid, db, {}, {})
-        assert report["recommendation"] == "HIRE"
+        # Student-centric label: 9.0 ≥ 7.5 → EXCELLENT (replaces the old HIRE label)
+        assert report["recommendation"] == "EXCELLENT"
         assert report["average_score"]  == 9.0
         db.close()
 

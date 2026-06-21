@@ -39,6 +39,7 @@ const COMPANY_TARGETS = [
 export default function InterviewSetup({ onStart }) {
   const [mode,          setMode]          = useState('topic')
   const [companyTarget, setCompanyTarget] = useState('product')
+  const [pressureMode,  setPressureMode]  = useState('practice')  // Phase 3
   const [topics,        setTopics]        = useState([])
   const [selected,      setSelected]      = useState([])
   const [jobRole,       setJobRole]       = useState('Software Engineering')
@@ -94,7 +95,8 @@ export default function InterviewSetup({ onStart }) {
       fd.append('interview_mode',     mode)
       fd.append('selected_topics',    JSON.stringify(selected))
       fd.append('resume_context',     resumeCtx)
-      fd.append('company_target',     companyTarget)   // ← NEW
+      fd.append('company_target',     companyTarget)
+      fd.append('pressure_mode',      pressureMode)  // Phase 3
       const { data } = await api.post('/interview/start', fd)
       onStart(data)
     } catch (err) {
@@ -113,6 +115,51 @@ export default function InterviewSetup({ onStart }) {
         <div className="page-header" style={{ justifyContent: 'center', marginBottom: 24 }}>
           <div className="logo-mark">🛡</div>
           <h1>Interview Setup</h1>
+        </div>
+
+        {/* Phase 3 — Pressure Mode Selector */}
+        <div className="card" style={{ marginBottom: 24, padding: '20px 22px' }}>
+          <h3 style={{ margin: '0 0 14px', fontSize: '0.95rem', color: 'var(--clr-text-muted)' }}>🎯 Choose Your Mode</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {[
+              {
+                id: 'practice',
+                icon: '🌱',
+                title: 'Just Practice',
+                desc: 'Relaxed mode with hints, soft timer, and no biometric monitoring. Perfect for learning.',
+                color: 'var(--clr-success)',
+              },
+              {
+                id: 'simulated',
+                icon: '🔥',
+                title: 'Simulate Real Pressure',
+                desc: 'Strict timer, webcam proctoring, no hints. Closest to a real interview experience.',
+                color: 'var(--clr-danger)',
+              },
+            ].map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => setPressureMode(opt.id)}
+                style={{
+                  background: pressureMode === opt.id ? `${opt.color}22` : 'var(--clr-surface-2)',
+                  border: `2px solid ${pressureMode === opt.id ? opt.color : 'var(--clr-border)'}`,
+                  borderRadius: 'var(--r-md)', padding: '14px 12px', cursor: 'pointer',
+                  textAlign: 'left', transition: 'all 0.18s',
+                }}
+              >
+                <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>{opt.icon}</div>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem', color: pressureMode === opt.id ? opt.color : 'var(--clr-text)', marginBottom: 4 }}>
+                  {opt.title}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--clr-text-muted)', lineHeight: 1.4 }}>{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+          {pressureMode === 'simulated' && (
+            <div className="alert alert-warning" style={{ marginTop: 14 }}>
+              ⚠️ <strong>Simulate Real Pressure mode</strong> will activate webcam monitoring, strict timing, and block hints. Make sure your webcam and mic are ready.
+            </div>
+          )}
         </div>
 
         {error && (

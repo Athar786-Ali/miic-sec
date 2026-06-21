@@ -80,15 +80,17 @@ class TestTranscribeRoute:
                 self.calls = []
 
             def transcribe(self, path, **kwargs):
-                # Ensure ffmpeg produced a real file that Whisper would read
+                # Ensure the temp file exists so Whisper / the fake model can read it
                 assert os.path.exists(path)
                 self.calls.append((path, kwargs))
                 return {"text": "test transcript"}
 
         fake = _FakeModel()
 
-        # Avoid downloading/loading a real Whisper model in tests
-        with patch("interview.transcriber._get_model", return_value=fake):
+        # Patch both the model loader AND the env var so we bypass Deepgram
+        # and exercise the local Whisper fallback path regardless of .env contents.
+        with patch("interview.transcriber._get_model", return_value=fake), \
+             patch.dict(os.environ, {"DEEPGRAM_API_KEY": ""}):
             r = client.post("/interview/transcribe", files=files)
 
         assert r.status_code == 200
@@ -102,3 +104,4 @@ class TestTranscribeRoute:
         assert kwargs.get("task") == "transcribe"
         assert kwargs.get("fp16") is False
         assert kwargs.get("condition_on_previous_text") is False
+

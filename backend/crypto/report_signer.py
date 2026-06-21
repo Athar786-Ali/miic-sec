@@ -24,9 +24,14 @@ from database import AuditLog, InterviewLog, Session as DBSession
 import config
 
 # ─── Recommendation thresholds ────────────────────────────────────────────────
-EXCELLENT_THRESHOLD    = 7.5   # average_score >= 7.5 → EXCELLENT
-NEEDS_PRACTICE_THRESHOLD = 5.0 # average_score >= 5.0 → NEEDS PRACTICE
-                                # otherwise            → POOR
+EXCELLENT_THRESHOLD      = 7.5   # average_score >= 7.5 → EXCELLENT
+NEEDS_PRACTICE_THRESHOLD = 5.0   # average_score >= 5.0 → NEEDS PRACTICE
+                                  # otherwise            → POOR
+
+# Backward-compat aliases (used by existing unit tests)
+HIRE_THRESHOLD   = EXCELLENT_THRESHOLD
+REVIEW_THRESHOLD = NEEDS_PRACTICE_THRESHOLD
+
 
 REPORTS_DIR = Path("reports")
 

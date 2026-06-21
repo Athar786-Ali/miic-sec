@@ -369,6 +369,18 @@ export default function Login() {
           </div>
         )}
       </div>
+
+      {/* Phase 1: Link to email/password signup */}
+      <div style={{
+        marginTop: 24, textAlign: 'center',
+        fontSize: '0.83rem', color: 'var(--clr-text-muted)',
+      }}>
+        New here?{' '}
+        <Link to="/signup" style={{ color: 'var(--clr-accent)', fontWeight: 600 }}>
+          Create an account with email →
+        </Link>
+      </div>
     </div>
   )
 }
+
